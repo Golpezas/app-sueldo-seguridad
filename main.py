@@ -1,5 +1,5 @@
 import flet as ft
-from datetime import date
+from datetime import date, datetime
 import calendar
 import holidays
 from pydantic import BaseModel, Field
@@ -12,6 +12,13 @@ class ConfiguracionMes(BaseModel):
     anio: int = Field(..., ge=2024, le=2030)
     mes: int = Field(..., ge=1, le=12)
     horas_reales: float = Field(..., ge=0, description="Total de horas realmente trabajadas")
+    fecha_ingreso: date = Field(..., description="Fecha de ingreso para cálculo de antigüedad")
+
+class EscalaSalarial(BaseModel):
+    basico: float
+    presentismo: float
+    viaticos: float
+    suma_no_rem: float
 
 # ==========================================
 # 2. CAPA DE NEGOCIO (Motor + Finanzas)
@@ -19,18 +26,29 @@ class ConfiguracionMes(BaseModel):
 class MotorJornadaAutomatica:
     def __init__(self):
         self.feriados_arg = holidays.country_holidays('AR')
-        
-        # Valores Fijos de tu Categoría (Según recibo Marzo 2026)
-        self.sueldo_basico = 884800.00
-        self.presentismo = 165000.00
-        self.viaticos = 473800.00
-        self.suma_no_rem = 25000.00
         self.os_fija = 750.00
         
-        # Valores de horas derivados
-        self.valor_hora_normal = (self.sueldo_basico + self.presentismo) / 200
-        self.valor_hora_extra = self.valor_hora_normal * 1.5
-        self.valor_dia_feriado = self.sueldo_basico / 25
+        # Histórico de Escalas UPSRA 2026 (Categoría: Vigilador General)
+        self.historico_escalas = {
+            "2026-01": EscalaSalarial(basico=867200, presentismo=165000, viaticos=473800, suma_no_rem=10000),
+            "2026-02": EscalaSalarial(basico=876000, presentismo=165000, viaticos=473800, suma_no_rem=25000),
+            "2026-03": EscalaSalarial(basico=884800, presentismo=165000, viaticos=473800, suma_no_rem=25000),
+            "2026-04": EscalaSalarial(basico=893650, presentismo=165000, viaticos=480500, suma_no_rem=25000),
+            "2026-05": EscalaSalarial(basico=902600, presentismo=165000, viaticos=487000, suma_no_rem=30000),
+            "2026-06": EscalaSalarial(basico=911650, presentismo=165000, viaticos=498000, suma_no_rem=70000),
+        }
+
+    def obtener_escala(self, anio: int, mes: int) -> EscalaSalarial:
+        clave = f"{anio}-{mes:02d}"
+        # Si no encuentra el mes, devuelve la última escala conocida (junio 2026)
+        return self.historico_escalas.get(clave, self.historico_escalas["2026-06"])
+
+    def calcular_antiguedad(self, fecha_ingreso: date, anio_liq: int, mes_liq: int) -> int:
+        fecha_liq = date(anio_liq, mes_liq, 1)
+        anios = fecha_liq.year - fecha_ingreso.year
+        if (fecha_liq.month, fecha_liq.day) < (fecha_ingreso.month, fecha_ingreso.day):
+            anios -= 1
+        return max(0, anios)
 
     def obtener_base_mensual(self, anio: int, mes: int) -> int:
         _, dias_en_mes = calendar.monthrange(anio, mes)
@@ -63,20 +81,29 @@ class MotorJornadaAutomatica:
     def procesar_liquidacion(self, config: ConfiguracionMes) -> dict:
         base_requerida = self.obtener_base_mensual(config.anio, config.mes)
         proyeccion = self.proyectar_mes_ideal(config.anio, config.mes)
+        escala_activa = self.obtener_escala(config.anio, config.mes)
         
         horas_extras = max(0.0, config.horas_reales - base_requerida)
         tiene_presentismo = config.horas_reales >= base_requerida
         
-        # --- CÁLCULO FINANCIERO ---
-        total_extras_pesos = horas_extras * self.valor_hora_extra
-        total_feriados_pesos = proyeccion["feriados_habiles"] * self.valor_dia_feriado
-        presentismo_pesos = self.presentismo if tiene_presentismo else 0.0
+        # --- CÁLCULO DE ANTIGÜEDAD ---
+        anios_antiguedad = self.calcular_antiguedad(config.fecha_ingreso, config.anio, config.mes)
+        pago_antiguedad = (escala_activa.basico * 0.01) * anios_antiguedad # 1% del básico por año
         
-        # 1. Remunerativo
-        total_remunerativo = self.sueldo_basico + presentismo_pesos + total_extras_pesos + total_feriados_pesos
+        # --- CÁLCULO FINANCIERO DINÁMICO ---
+        valor_hora_normal = (escala_activa.basico + escala_activa.presentismo + pago_antiguedad) / 200
+        valor_hora_extra = valor_hora_normal * 1.5
+        valor_dia_feriado = escala_activa.basico / 25
+        
+        total_extras_pesos = horas_extras * valor_hora_extra
+        total_feriados_pesos = proyeccion["feriados_habiles"] * valor_dia_feriado
+        presentismo_pesos = escala_activa.presentismo if tiene_presentismo else 0.0
+        
+        # 1. Remunerativo (Se suma la antigüedad)
+        total_remunerativo = escala_activa.basico + presentismo_pesos + total_extras_pesos + total_feriados_pesos + pago_antiguedad
         
         # 2. No Remunerativo
-        total_no_remunerativo = self.viaticos + self.suma_no_rem
+        total_no_remunerativo = escala_activa.viaticos + escala_activa.suma_no_rem
         
         # 3. Retenciones (17% de ley + cuota fija OS)
         retenciones_porcentaje = total_remunerativo * 0.17
@@ -90,6 +117,8 @@ class MotorJornadaAutomatica:
             "feriados_trabajados": proyeccion["feriados_habiles"],
             "horas_extras": horas_extras,
             "presentismo": tiene_presentismo,
+            "anios_antiguedad": anios_antiguedad,
+            "pago_antiguedad": pago_antiguedad,
             # Data financiera
             "pesos_remunerativo": total_remunerativo,
             "pesos_no_rem": total_no_remunerativo,
@@ -103,17 +132,24 @@ class MotorJornadaAutomatica:
 def main(page: ft.Page):
     page.title = "Sistema de Control de Horas y Sueldo"
     page.window.width = 450
-    page.window.height = 850
+    page.window.height = 880
     page.theme_mode = ft.ThemeMode.DARK
     page.padding = 30
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-    page.scroll = ft.ScrollMode.AUTO  # Agregamos scroll para que no se corte la info
+    page.scroll = ft.ScrollMode.AUTO  
     
     motor = MotorJornadaAutomatica()
 
     page.add(ft.Text("Calculadora Salarial", size=26, weight=ft.FontWeight.BOLD, color="blue400"))
-    page.add(ft.Text("Inferencia automática + Liquidación", size=14, color="white54"))
+    page.add(ft.Text("Escalas UPSRA + Antigüedad", size=14, color="white54"))
     page.add(ft.Divider(height=10, color="transparent"))
+
+    in_fecha_ingreso = ft.TextField(
+        label="Fecha de Ingreso (YYYY-MM-DD)",
+        value="2025-06-05", 
+        width=340,
+        text_align=ft.TextAlign.CENTER
+    )
 
     anio_dropdown = ft.Dropdown(
         label="Año",
@@ -141,6 +177,7 @@ def main(page: ft.Page):
     lbl_extras = ft.Text("Extras: --", size=18, weight=ft.FontWeight.BOLD, color="orange")
     lbl_feriados = ft.Text("Feriados: --", size=14)
     lbl_presentismo = ft.Text("Presentismo: --", size=14)
+    lbl_antiguedad = ft.Text("Antigüedad: --", size=14, color="cyan")
 
     # Elementos Financieros
     lbl_remunerativo = ft.Text("Remunerativo: $0.00", size=14, color="white70")
@@ -160,10 +197,12 @@ def main(page: ft.Page):
 
     def calcular(e):
         try:
+            fecha_ing_val = datetime.strptime(in_fecha_ingreso.value, "%Y-%m-%d").date()
             config = ConfiguracionMes(
                 anio=int(anio_dropdown.value),
                 mes=int(mes_dropdown.value),
-                horas_reales=float(horas_input.value)
+                horas_reales=float(horas_input.value),
+                fecha_ingreso=fecha_ing_val
             )
             
             res = motor.procesar_liquidacion(config)
@@ -172,6 +211,7 @@ def main(page: ft.Page):
             lbl_base.value = f"Base exigida: {res['base_requerida']} hs"
             lbl_extras.value = f"Horas Extras: {res['horas_extras']} hs"
             lbl_feriados.value = f"Feriados (L a V): {res['feriados_trabajados']} días"
+            lbl_antiguedad.value = f"Antigüedad: {res['anios_antiguedad']} años (+${res['pago_antiguedad']:,.2f})"
             
             if res['presentismo']:
                 lbl_presentismo.value = "Presentismo: ALCANZADO ✅"
@@ -187,12 +227,11 @@ def main(page: ft.Page):
             lbl_neto.value = f"NETO A COBRAR: ${res['pesos_neto']:,.2f}"
                 
         except Exception as ex:
-            page.snack_bar = ft.SnackBar(ft.Text("Ingresa un número de horas válido."), bgcolor="red700")
+            page.snack_bar = ft.SnackBar(ft.Text("Revisa los datos ingresados (Formato fecha o número)."), bgcolor="red700")
             page.snack_bar.open = True
             
         page.update()
 
-    # Reemplazo de ElevatedButton por FilledButton para evitar warnings
     btn_calcular = ft.FilledButton(
         "Calcular Liquidación", 
         on_click=calcular, 
@@ -212,13 +251,14 @@ def main(page: ft.Page):
             ft.Divider(color="white24"),
             lbl_neto
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor=ft.Colors.with_opacity(0.05, "white"), # <--- CORREGIDO CON 'C' MAYÚSCULA
+        bgcolor=ft.Colors.with_opacity(0.05, "white"),
         padding=20,
         border_radius=10,
         width=340
     )
 
     page.add(
+        in_fecha_ingreso,
         ft.Row([mes_dropdown, anio_dropdown], alignment=ft.MainAxisAlignment.CENTER),
         ft.Divider(height=10, color="transparent"),
         horas_input,
@@ -228,6 +268,7 @@ def main(page: ft.Page):
         lbl_extras,
         lbl_base,
         lbl_feriados,
+        lbl_antiguedad,
         lbl_presentismo,
         ft.Divider(height=20, color="transparent"),
         panel_financiero
@@ -236,6 +277,5 @@ def main(page: ft.Page):
     auto_completar_horas()
 
 if __name__ == "__main__":
-    # Render asigna un puerto en la variable de entorno PORT
     puerto = int(os.environ.get("PORT", 8000))
     ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=puerto, host="0.0.0.0")

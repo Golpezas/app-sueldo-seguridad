@@ -4,9 +4,10 @@
 
 Single-file Flet web app (`main.py`, 281 LOC). Argentine salary calculator based on UPSRA CCT 507/07 collective bargaining agreement (Vigilador General category, Jan–Jun 2026 scales).
 
-- **Run**: `venv\Scripts\Activate.ps1` then `python main.py` — opens browser at `http://localhost:8000`
-- **Entrypoint**: `main.py` -> `ft.run(main=main, view=ft.AppView.WEB_BROWSER, port=..., host="localhost")`
+- **Run**: `venv\Scripts\Activate.ps1` then `python main.py` — open browser at `http://localhost:8000`
+- **Entrypoint**: `main.py` -> `ft.run(main=main, view=ft.AppView.WEB_BROWSER, port=..., host="0.0.0.0")`
 - **PORT**: overridable via env var `PORT` (default 8000)
+- **host**: `0.0.0.0` required for Render port detection; access locally via `localhost`, NOT `0.0.0.0` in the browser
 
 ## Architecture
 

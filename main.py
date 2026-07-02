@@ -356,4 +356,4 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     puerto = int(os.environ.get("PORT", 8000))
-    ft.run(main=main, view=ft.AppView.WEB_BROWSER, port=puerto, host="localhost")
+    ft.run(main=main, view=ft.AppView.WEB_BROWSER, port=puerto, host="0.0.0.0")

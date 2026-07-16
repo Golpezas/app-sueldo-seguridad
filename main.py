@@ -150,13 +150,6 @@ class MotorJornadaAutomatica:
         proyeccion = self.proyectar_mes_ideal(config.anio, config.mes)
         escala_activa = self.obtener_escala(categoria, config.anio, config.mes)
         
-        horas_extras = max(0.0, config.horas_reales - base_requerida)
-        tiene_presentismo = config.horas_reales >= base_requerida
-        
-        # --- CÁLCULO DE ANTIGÜEDAD ---
-        anios_antiguedad = self.calcular_antiguedad(config.fecha_ingreso, config.anio, config.mes)
-        pago_antiguedad = (escala_activa.basico * 0.01) * anios_antiguedad # 1% del básico por año
-        
         # --- CÁLCULO DE VACACIONES ---
         dias_vacaciones = config.dias_vacaciones
         if dias_vacaciones > 0:
@@ -171,6 +164,14 @@ class MotorJornadaAutomatica:
             pago_vacaciones = 0.0
             total_basico = escala_activa.basico
             plus_vacacional = 0.0
+        
+        horas_extras = max(0.0, config.horas_reales - base_requerida)
+        # Con vacaciones, la empresa considera esos días como trabajo efectivo
+        tiene_presentismo = config.horas_reales >= base_requerida or dias_vacaciones > 0
+        
+        # --- CÁLCULO DE ANTIGÜEDAD ---
+        anios_antiguedad = self.calcular_antiguedad(config.fecha_ingreso, config.anio, config.mes)
+        pago_antiguedad = (escala_activa.basico * 0.01) * anios_antiguedad # 1% del básico por año
         
         # --- CÁLCULO FINANCIERO DINÁMICO ---
         valor_hora_normal = (escala_activa.basico + escala_activa.presentismo + pago_antiguedad) / 200

@@ -13,7 +13,6 @@ class ConfiguracionMes(BaseModel):
     mes: int = Field(..., ge=1, le=12)
     horas_reales: float = Field(..., ge=0, description="Total de horas realmente trabajadas")
     fecha_ingreso: date = Field(..., description="Fecha de ingreso para cálculo de antigüedad")
-    dias_vacaciones: int = Field(default=0, ge=0, le=14, description="Días de vacaciones a tomar (0, 7 o 14)")
 
 class EscalaSalarial(BaseModel):
     basico: float
@@ -145,7 +144,6 @@ class MotorJornadaAutomatica:
         }
 
     def procesar_liquidacion(self, config: ConfiguracionMes, categoria: str) -> dict:
-        _, dias_en_mes = calendar.monthrange(config.anio, config.mes)
         base_requerida = self.obtener_base_mensual(config.anio, config.mes)
         proyeccion = self.proyectar_mes_ideal(config.anio, config.mes)
         escala_activa = self.obtener_escala(categoria, config.anio, config.mes)
@@ -157,21 +155,6 @@ class MotorJornadaAutomatica:
         anios_antiguedad = self.calcular_antiguedad(config.fecha_ingreso, config.anio, config.mes)
         pago_antiguedad = (escala_activa.basico * 0.01) * anios_antiguedad # 1% del básico por año
         
-        # --- CÁLCULO DE VACACIONES ---
-        dias_vacaciones = config.dias_vacaciones
-        if dias_vacaciones > 0:
-            dias_trabajados = dias_en_mes - dias_vacaciones
-            pago_basico_trabajado = (escala_activa.basico / 30) * dias_trabajados
-            pago_vacaciones = (escala_activa.basico / 25) * dias_vacaciones
-            total_basico = pago_basico_trabajado + pago_vacaciones
-            plus_vacacional = total_basico - escala_activa.basico
-        else:
-            dias_trabajados = dias_en_mes
-            pago_basico_trabajado = escala_activa.basico
-            pago_vacaciones = 0.0
-            total_basico = escala_activa.basico
-            plus_vacacional = 0.0
-        
         # --- CÁLCULO FINANCIERO DINÁMICO ---
         valor_hora_normal = (escala_activa.basico + escala_activa.presentismo + pago_antiguedad) / 200
         valor_hora_extra = valor_hora_normal * 1.5
@@ -181,8 +164,8 @@ class MotorJornadaAutomatica:
         total_feriados_pesos = proyeccion["feriados_habiles"] * valor_dia_feriado
         presentismo_pesos = escala_activa.presentismo if tiene_presentismo else 0.0
         
-        # 1. Remunerativo (Se suma la antigüedad y vacaciones si corresponde)
-        total_remunerativo = total_basico + presentismo_pesos + total_extras_pesos + total_feriados_pesos + pago_antiguedad
+        # 1. Remunerativo (Se suma la antigüedad)
+        total_remunerativo = escala_activa.basico + presentismo_pesos + total_extras_pesos + total_feriados_pesos + pago_antiguedad
         
         # 2. No Remunerativo
         total_no_remunerativo = escala_activa.viaticos + escala_activa.suma_no_rem
@@ -201,12 +184,6 @@ class MotorJornadaAutomatica:
             "presentismo": tiene_presentismo,
             "anios_antiguedad": anios_antiguedad,
             "pago_antiguedad": pago_antiguedad,
-            # Data vacaciones
-            "dias_vacaciones": dias_vacaciones,
-            "dias_trabajados": dias_trabajados,
-            "pago_basico_trabajado": pago_basico_trabajado,
-            "pago_vacaciones": pago_vacaciones,
-            "plus_vacacional": plus_vacacional,
             # Data financiera
             "pesos_remunerativo": total_remunerativo,
             "pesos_no_rem": total_no_remunerativo,
@@ -267,17 +244,6 @@ def main(page: ft.Page):
         text_align=ft.TextAlign.CENTER
     )
 
-    vacaciones_dropdown = ft.Dropdown(
-        label="Días de Vacaciones",
-        options=[
-            ft.dropdown.Option("0"),
-            ft.dropdown.Option("7"),
-            ft.dropdown.Option("14")
-        ],
-        value="0",
-        width=160
-    )
-
     # Elementos de Horas
     lbl_base = ft.Text("Base: --", size=14)
     lbl_extras = ft.Text("Extras: --", size=18, weight=ft.FontWeight.BOLD, color="orange")
@@ -290,29 +256,16 @@ def main(page: ft.Page):
     lbl_no_rem = ft.Text("No Remunerativo: $0.00", size=14, color="white70")
     lbl_descuentos = ft.Text("Retenciones: $0.00", size=14, color="red400")
     lbl_neto = ft.Text("NETO A COBRAR: $0.00", size=24, weight=ft.FontWeight.BOLD, color="green400")
-    
-    # Elementos de Vacaciones
-    lbl_vacaciones = ft.Text("", size=14, color="yellow")
 
     def auto_completar_horas(e=None):
         anio = int(anio_dropdown.value)
         mes = int(mes_dropdown.value)
-        dias_vac = int(vacaciones_dropdown.value)
-        _, dias_en_mes = calendar.monthrange(anio, mes)
         proyeccion = motor.proyectar_mes_ideal(anio, mes)
-        
-        if dias_vac > 0:
-            dias_trabajados = dias_en_mes - dias_vac
-            factor = dias_trabajados / dias_en_mes
-            horas_ajustadas = int(proyeccion["horas_teoricas"] * factor)
-            horas_input.value = str(horas_ajustadas)
-        else:
-            horas_input.value = str(proyeccion["horas_teoricas"])
+        horas_input.value = str(proyeccion["horas_teoricas"])
         page.update()
 
     anio_dropdown.on_change = auto_completar_horas
     mes_dropdown.on_change = auto_completar_horas
-    vacaciones_dropdown.on_change = auto_completar_horas
 
     def calcular(e):
         try:
@@ -321,8 +274,7 @@ def main(page: ft.Page):
                 anio=int(anio_dropdown.value),
                 mes=int(mes_dropdown.value),
                 horas_reales=float(horas_input.value),
-                fecha_ingreso=fecha_ing_val,
-                dias_vacaciones=int(vacaciones_dropdown.value)
+                fecha_ingreso=fecha_ing_val
             )
             
             res = motor.procesar_liquidacion(config, categoria_dropdown.value)
@@ -341,18 +293,6 @@ def main(page: ft.Page):
             else:
                 lbl_presentismo.value = "Presentismo: PERDIDO ❌"
                 lbl_presentismo.color = "red"
-            
-            # Mostrar desglose de vacaciones
-            if res['dias_vacaciones'] > 0:
-                lbl_vacaciones.value = (
-                    f"Vacaciones: {res['dias_vacaciones']} días\n"
-                    f"  Trabajados: {res['dias_trabajados']} días (${res['pago_basico_trabajado']:,.2f})\n"
-                    f"  Vacaciones: ${res['pago_vacaciones']:,.2f}\n"
-                    f"  Plus vacacional: +${res['plus_vacacional']:,.2f}"
-                )
-                lbl_vacaciones.color = "yellow"
-            else:
-                lbl_vacaciones.value = ""
                 
             # Actualizar textos financieros con formato de moneda
             lbl_remunerativo.value = f"Remunerativo: ${res['pesos_remunerativo']:,.2f}"
@@ -398,8 +338,8 @@ def main(page: ft.Page):
         ft.Divider(height=5, color="transparent"),
         in_fecha_ingreso,
         ft.Row([mes_dropdown, anio_dropdown], alignment=ft.MainAxisAlignment.CENTER),
-        ft.Divider(height=5, color="transparent"),
-        ft.Row([horas_input, vacaciones_dropdown], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Divider(height=10, color="transparent"),
+        horas_input,
         ft.Divider(height=10, color="transparent"),
         btn_calcular,
         ft.Divider(height=20, color="white24"),
@@ -408,7 +348,6 @@ def main(page: ft.Page):
         lbl_feriados,
         lbl_antiguedad,
         lbl_presentismo,
-        lbl_vacaciones,
         ft.Divider(height=20, color="transparent"),
         panel_financiero
     )

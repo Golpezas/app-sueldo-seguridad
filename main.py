@@ -220,10 +220,8 @@ class MotorJornadaAutomatica:
 # ==========================================
 def main(page: ft.Page):
     page.title = "Sistema de Control de Horas y Sueldo"
-    page.window.width = 450
-    page.window.height = 880
     page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 30
+    page.padding = 20
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.scroll = ft.ScrollMode.AUTO  
     
@@ -237,13 +235,13 @@ def main(page: ft.Page):
         label="Categoría",
         options=[ft.dropdown.Option(c) for c in motor.historico_escalas.keys()],
         value="Vigilador General",
-        width=340
+        expand=True
     )
 
     in_fecha_ingreso = ft.TextField(
         label="Fecha de Ingreso (YYYY-MM-DD)",
         value="2025-06-05", 
-        width=340,
+        expand=True,
         text_align=ft.TextAlign.CENTER
     )
 
@@ -251,19 +249,19 @@ def main(page: ft.Page):
         label="Año",
         options=[ft.dropdown.Option(str(y)) for y in range(2024, 2030)],
         value=str(date.today().year),
-        width=160
+        expand=True
     )
     mes_dropdown = ft.Dropdown(
         label="Mes",
         options=[ft.dropdown.Option(str(m)) for m in range(1, 13)],
         value=str(date.today().month),
-        width=160
+        expand=True
     )
     
     horas_input = ft.TextField(
         label="Horas Totales del Mes", 
         keyboard_type=ft.KeyboardType.NUMBER,
-        width=340,
+        expand=True,
         text_size=20,
         text_align=ft.TextAlign.CENTER
     )
@@ -276,7 +274,7 @@ def main(page: ft.Page):
             ft.dropdown.Option("14")
         ],
         value="0",
-        width=160
+        expand=True
     )
 
     # Elementos de Horas
@@ -370,7 +368,7 @@ def main(page: ft.Page):
     btn_calcular = ft.FilledButton(
         "Calcular Liquidación", 
         on_click=calcular, 
-        width=340, 
+        expand=True,
         height=50,
         style=ft.ButtonStyle(bgcolor="blue700", color="white")
     )
@@ -391,16 +389,17 @@ def main(page: ft.Page):
         bgcolor=ft.Colors.with_opacity(0.05, "white"),
         padding=20,
         border_radius=10,
-        width=340
+        expand=True
     )
 
     page.add(
         categoria_dropdown,
         ft.Divider(height=5, color="transparent"),
         in_fecha_ingreso,
-        ft.Row([mes_dropdown, anio_dropdown], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Row([mes_dropdown, anio_dropdown], expand=True),
         ft.Divider(height=5, color="transparent"),
-        ft.Row([horas_input, vacaciones_dropdown], alignment=ft.MainAxisAlignment.CENTER),
+        horas_input,
+        vacaciones_dropdown,
         ft.Divider(height=10, color="transparent"),
         btn_calcular,
         ft.Divider(height=20, color="white24"),

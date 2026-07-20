@@ -198,6 +198,37 @@ class MotorJornadaAutomatica:
             "feriados_habiles": feriados_l_v
         }
 
+    def _calcular_sac(self, categoria: str, anio: int, mes: int, fecha_ingreso: date) -> float:
+        semestre = 1 if mes == 6 else 2
+        meses_semestre = range(1, 7) if semestre == 1 else range(7, 13)
+        mayor_remunerativo = 0.0
+
+        for m in meses_semestre:
+            clave = f"{anio}-{m:02d}"
+            escalas_cat = self.historico_escalas.get(categoria, self.historico_escalas["Vigilador General"])
+            escala = escalas_cat.get(clave)
+            if not escala:
+                continue
+
+            base_m = self.obtener_base_mensual(anio, m)
+            _, dias_en_m = calendar.monthrange(anio, m)
+            proyeccion_m = self.proyectar_mes_ideal(anio, m)
+
+            anios_ant = self.calcular_antiguedad(fecha_ingreso, anio, m)
+            pago_ant = (escala.basico * 0.01) * anios_ant
+
+            valor_hora = (escala.basico + escala.presentismo + pago_ant) / 200
+            valor_feriado = escala.basico / 25
+
+            total_extras_m = (proyeccion_m["horas_teoricas"] - base_m) * valor_hora * 1.5
+            total_feriados_m = proyeccion_m["feriados_habiles"] * valor_feriado
+
+            remunerativo_m = escala.basico + escala.presentismo + pago_ant + max(0, total_extras_m) + total_feriados_m
+            if remunerativo_m > mayor_remunerativo:
+                mayor_remunerativo = remunerativo_m
+
+        return mayor_remunerativo * 0.5
+
     def procesar_liquidacion(self, config: ConfiguracionMes, categoria: str) -> dict:
         _, dias_en_mes = calendar.monthrange(config.anio, config.mes)
         base_requerida = self.obtener_base_mensual(config.anio, config.mes)
@@ -248,7 +279,12 @@ class MotorJornadaAutomatica:
         
         # 4. Neto
         neto_a_cobrar = (total_remunerativo + total_no_remunerativo) - total_retenciones
-        
+
+        # 5. SUELDO ANUAL COMPLEMENTARIO (SAC / Aguinaldo)
+        sac = 0.0
+        if config.mes == 6 or config.mes == 12:
+            sac = self._calcular_sac(categoria, config.anio, config.mes, config.fecha_ingreso)
+
         return {
             "base_requerida": base_requerida,
             "feriados_trabajados": proyeccion["feriados_habiles"],
@@ -266,7 +302,8 @@ class MotorJornadaAutomatica:
             "pesos_remunerativo": total_remunerativo,
             "pesos_no_rem": total_no_remunerativo,
             "pesos_retenciones": total_retenciones,
-            "pesos_neto": neto_a_cobrar
+            "pesos_neto": neto_a_cobrar,
+            "sac": sac
         }
 
 # ==========================================
@@ -347,6 +384,9 @@ def main(page: ft.Page):
     # Elementos de Vacaciones
     lbl_vacaciones = ft.Text("", size=14, color="yellow")
 
+    # Elemento de Aguinaldo
+    lbl_aguinaldo = ft.Text("", size=14, color="amber400")
+
     def auto_completar_horas(e=None):
         anio = int(anio_dropdown.value)
         mes = int(mes_dropdown.value)
@@ -412,6 +452,12 @@ def main(page: ft.Page):
             lbl_no_rem.value = f"No Remunerativo: ${res['pesos_no_rem']:,.2f}"
             lbl_descuentos.value = f"Retenciones: -${res['pesos_retenciones']:,.2f}"
             lbl_neto.value = f"NETO A COBRAR: ${res['pesos_neto']:,.2f}"
+
+            if res['sac'] > 0:
+                sem_text = "1° semestre (Jun)" if int(mes_dropdown.value) == 6 else "2° semestre (Dic)"
+                lbl_aguinaldo.value = f"SAC - {sem_text}: ${res['sac']:,.2f}"
+            else:
+                lbl_aguinaldo.value = ""
                 
         except Exception as ex:
             page.snack_bar = ft.SnackBar(ft.Text("Revisa los datos ingresados (Formato fecha o número)."), bgcolor="red700")
@@ -438,7 +484,8 @@ def main(page: ft.Page):
             lbl_no_rem,
             lbl_descuentos,
             ft.Divider(color="white24"),
-            lbl_neto
+            lbl_neto,
+            lbl_aguinaldo
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         bgcolor=ft.Colors.with_opacity(0.05, "white"),
         padding=20,
